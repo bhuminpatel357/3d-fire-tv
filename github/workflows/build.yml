@@ -1,4 +1,4 @@
-name: Build Glass Home APK
+name: .Build Glass Home APK
 
 on:
   push:
