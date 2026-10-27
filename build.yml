@@ -1,0 +1,473 @@
+name: Build Glass Home APK
+
+on:
+  push:
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: 17
+
+      - uses: gradle/actions/setup-gradle@v4
+        with:
+          gradle-version: 8.7
+
+      - name: Create project files
+        run: |
+          mkdir -p proj/app proj/app/src/main proj/app/src/main/assets proj/app/src/main/java/com/glass/launcher proj/app/src/main/res/drawable proj/app/src/main/res/values
+          cat > proj/app/build.gradle <<'GLASS_EOF'
+          plugins {
+              id 'com.android.application'
+          }
+
+          android {
+              namespace 'com.glass.launcher'
+              compileSdk 34
+
+              defaultConfig {
+                  applicationId "com.glass.launcher"
+                  minSdk 22          // Fire OS 5.x and newer
+                  targetSdk 30       // Fire OS 7/8 are Android 9/11 based
+                  versionCode 1
+                  versionName "1.0"
+              }
+
+              buildTypes {
+                  release {
+                      minifyEnabled false
+                      // Signed with the debug key so the APK installs without extra setup
+                      signingConfig signingConfigs.debug
+                  }
+              }
+
+              compileOptions {
+                  sourceCompatibility JavaVersion.VERSION_17
+                  targetCompatibility JavaVersion.VERSION_17
+              }
+          }
+          GLASS_EOF
+          cat > proj/app/src/main/AndroidManifest.xml <<'GLASS_EOF'
+          <?xml version="1.0" encoding="utf-8"?>
+          <manifest xmlns:android="http://schemas.android.com/apk/res/android">
+
+              <uses-permission android:name="android.permission.INTERNET" />
+
+              <uses-feature android:name="android.software.leanback" android:required="false" />
+              <uses-feature android:name="android.hardware.touchscreen" android:required="false" />
+
+              <!-- Lets the launcher see which apps are installed (Android 11+) -->
+              <queries>
+                  <intent>
+                      <action android:name="android.intent.action.MAIN" />
+                      <category android:name="android.intent.category.LEANBACK_LAUNCHER" />
+                  </intent>
+                  <intent>
+                      <action android:name="android.intent.action.MAIN" />
+                      <category android:name="android.intent.category.LAUNCHER" />
+                  </intent>
+              </queries>
+
+              <application
+                  android:allowBackup="true"
+                  android:label="@string/app_name"
+                  android:banner="@drawable/banner"
+                  android:icon="@drawable/banner"
+                  android:hardwareAccelerated="true"
+                  android:usesCleartextTraffic="false"
+                  android:theme="@style/AppTheme">
+
+                  <activity
+                      android:name=".MainActivity"
+                      android:exported="true"
+                      android:launchMode="singleTask"
+                      android:screenOrientation="landscape"
+                      android:configChanges="keyboard|keyboardHidden|navigation|orientation|screenSize|uiMode">
+
+                      <!-- Shows up in the Fire TV "Your Apps" list -->
+                      <intent-filter>
+                          <action android:name="android.intent.action.MAIN" />
+                          <category android:name="android.intent.category.LAUNCHER" />
+                          <category android:name="android.intent.category.LEANBACK_LAUNCHER" />
+                      </intent-filter>
+
+                      <!-- Lets launcher-switching tools pick it as a home screen -->
+                      <intent-filter>
+                          <action android:name="android.intent.action.MAIN" />
+                          <category android:name="android.intent.category.HOME" />
+                          <category android:name="android.intent.category.DEFAULT" />
+                      </intent-filter>
+                  </activity>
+              </application>
+          </manifest>
+          GLASS_EOF
+          cat > proj/app/src/main/assets/index.html <<'GLASS_EOF'
+          <!doctype html>
+          <html lang="en">
+          <head>
+          <meta charset="utf-8">
+          <meta name="viewport" content="width=device-width,initial-scale=1">
+          <title>Glass Home</title>
+          <style>
+          :root{
+            --glass:rgba(255,255,255,.14);
+            --glass-strong:rgba(255,255,255,.24);
+            --edge:rgba(255,255,255,.45);
+            --text:#fff;
+            --muted:rgba(255,255,255,.7);
+          }
+          *{box-sizing:border-box;margin:0;padding:0}
+          html,body{height:100%;overflow:hidden;background:#0b0d1a;color:var(--text);font-family:"Segoe UI",Roboto,Helvetica,Arial,sans-serif}
+          /* animated backdrop */
+          .bg{position:fixed;inset:0;background:linear-gradient(135deg,#0f1030,#1b1448 50%,#0a2a4a);overflow:hidden}
+          .orb{position:absolute;border-radius:50%;filter:blur(60px);opacity:.85;animation:float 18s ease-in-out infinite}
+          .o1{width:42vw;height:42vw;left:-8vw;top:-10vw;background:#7c3aed}
+          .o2{width:36vw;height:36vw;right:-6vw;top:10vw;background:#06b6d4;animation-delay:-6s}
+          .o3{width:34vw;height:34vw;left:30vw;bottom:-16vw;background:#ec4899;animation-delay:-12s}
+          @keyframes float{0%,100%{transform:translate(0,0) scale(1)}50%{transform:translate(4vw,3vw) scale(1.12)}}
+
+          .screen{position:relative;height:100%;padding:3vw 4vw 0;display:flex;flex-direction:column;perspective:1400px}
+
+          /* top bar */
+          .top{display:flex;justify-content:space-between;align-items:center}
+          .greet h1{font-size:2.4vw;font-weight:600;letter-spacing:.02em}
+          .greet p{font-size:1.2vw;color:var(--muted);margin-top:.3vw}
+          .status{display:flex;gap:1vw;align-items:center}
+          .chip{padding:.6vw 1.4vw;border-radius:999px;background:var(--glass);border:1px solid var(--edge);
+            backdrop-filter:blur(24px) saturate(160%);-webkit-backdrop-filter:blur(24px) saturate(160%);font-size:1.3vw}
+
+          /* glass base */
+          .glass{background:linear-gradient(145deg,rgba(255,255,255,.26),rgba(255,255,255,.07));
+            border:1px solid var(--edge);
+            backdrop-filter:blur(28px) saturate(170%);-webkit-backdrop-filter:blur(28px) saturate(170%);
+            box-shadow:0 1.6vw 3vw rgba(0,0,0,.35),inset 0 1px 0 rgba(255,255,255,.6),inset 0 -1px 0 rgba(255,255,255,.12)}
+
+          /* hero */
+          .hero{margin-top:2.4vw;height:17vw;border-radius:2vw;padding:2.4vw 3vw;display:flex;flex-direction:column;justify-content:center;
+            transform-style:preserve-3d;transition:transform .35s cubic-bezier(.2,.8,.2,1),box-shadow .35s;position:relative;overflow:hidden}
+          .hero::after{content:"";position:absolute;top:-40%;left:-20%;width:60%;height:200%;
+            background:linear-gradient(100deg,transparent,rgba(255,255,255,.22),transparent);transform:rotate(12deg)}
+          .hero small{color:var(--muted);font-size:1.1vw;letter-spacing:.2em;text-transform:uppercase}
+          .hero h2{font-size:3.4vw;margin:.5vw 0;font-weight:700}
+          .hero p{font-size:1.3vw;color:var(--muted);max-width:40vw}
+          .hero .play{margin-top:1.2vw;align-self:flex-start;padding:.7vw 2vw;border-radius:999px;background:rgba(255,255,255,.9);color:#1b1448;font-weight:700;font-size:1.3vw}
+
+          .label{margin:2vw 0 1vw .5vw;font-size:1.5vw;font-weight:600}
+          .row{overflow-x:auto;scrollbar-width:none;display:flex;gap:1.6vw;padding:1vw .5vw 2vw;transform-style:preserve-3d}
+
+          /* app tiles */
+          .tile{flex:0 0 13vw;height:8.6vw;border-radius:1.6vw;position:relative;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:.5vw;
+            transform-style:preserve-3d;transition:transform .3s cubic-bezier(.2,.8,.2,1),box-shadow .3s,background .3s;cursor:pointer;outline:none;text-decoration:none;color:inherit}
+          .tile .ico{font-size:2.8vw;width:4.2vw;height:4.2vw;border-radius:1.2vw;display:grid;place-items:center;
+            box-shadow:inset 0 1px 0 rgba(255,255,255,.7),0 .5vw 1vw rgba(0,0,0,.3);transform:translateZ(2vw)}
+          .tile span{font-size:1.15vw;transform:translateZ(1vw)}
+
+          .focus{transform:translateZ(3.5vw) rotateX(6deg) scale(1.08);
+            background:linear-gradient(145deg,rgba(255,255,255,.5),rgba(255,255,255,.16));
+            box-shadow:0 2.6vw 4vw rgba(0,0,0,.5),0 0 0 .22vw rgba(255,255,255,.9),0 0 3vw rgba(255,255,255,.45),inset 0 1px 0 #fff}
+
+          /* capsule taskbar */
+          .dock{position:fixed;left:50%;bottom:2.2vw;transform:translateX(-50%);display:flex;gap:.8vw;padding:.8vw 1.2vw;border-radius:999px;z-index:5}
+          .dbtn{display:flex;align-items:center;gap:.7vw;height:4.2vw;min-width:4.2vw;padding:0 1.2vw;border-radius:999px;justify-content:center;
+            font-size:1.6vw;transition:all .3s cubic-bezier(.2,.8,.2,1);outline:none;background:transparent;border:1px solid transparent;color:var(--text)}
+          .dbtn b{font-weight:600;font-size:1.2vw;max-width:0;overflow:hidden;white-space:nowrap;transition:max-width .35s}
+          .dbtn.focus{background:linear-gradient(145deg,rgba(255,255,255,.6),rgba(255,255,255,.2));border-color:#fff;
+            transform:translateY(-.5vw) scale(1.06);box-shadow:0 1vw 2vw rgba(0,0,0,.4),0 0 2vw rgba(255,255,255,.5)}
+          .dbtn.focus b{max-width:12vw}
+          .dbtn.active:not(.focus){background:rgba(255,255,255,.14)}
+
+          .toast{position:fixed;top:2vw;left:50%;transform:translate(-50%,-8vw);padding:.8vw 2vw;border-radius:999px;font-size:1.3vw;z-index:9;transition:transform .4s}
+          .toast.show{transform:translate(-50%,0)}
+          .row::-webkit-scrollbar{display:none}
+          </style>
+          </head>
+          <body>
+          <div class="bg"><div class="orb o1"></div><div class="orb o2"></div><div class="orb o3"></div></div>
+
+          <main class="screen">
+            <header class="top">
+              <div class="greet"><h1 id="greet">Good morning</h1><p>What would you like to watch?</p></div>
+              <div class="status"><div class="chip" id="date"></div><div class="chip" id="clock"></div></div>
+            </header>
+
+            <section class="hero glass nav" data-row="0" tabindex="0" data-url="https://www.youtube.com" data-pkg="com.amazon.firetv.youtube">
+              <small>Featured</small>
+              <h2>Continue Watching</h2>
+              <p>Pick up right where you left off, or explore something new from your favourite apps.</p>
+              <div class="play">▶ Play</div>
+            </section>
+
+            <div class="label">Your Apps</div>
+            <div class="row" id="apps"></div>
+          </main>
+
+          <nav class="dock glass" id="dock"></nav>
+          <div class="toast glass" id="toast"></div>
+
+          <script>
+          const APPS=[
+           ["Prime Video","🎬","#0ea5e9,#2563eb","https://www.primevideo.com","com.amazon.avod"],
+           ["YouTube","▶️","#ef4444,#f97316","https://www.youtube.com","com.amazon.firetv.youtube"],
+           ["Netflix","🍿","#dc2626,#7f1d1d","https://www.netflix.com","com.netflix.ninja"],
+           ["Disney+","✨","#6366f1,#8b5cf6","https://www.disneyplus.com","com.disney.disneyplus"],
+           ["Spotify","🎵","#10b981,#065f46","https://open.spotify.com","com.spotify.tv.android"],
+           ["Kodi","📀","#06b6d4,#0e7490","https://kodi.tv","org.xbmc.kodi"],
+           ["Browser","🌐","#f59e0b,#ef4444","https://www.google.com","com.amazon.cloud9"]
+          ];
+          const DOCK=[["Home","🏠"],["Search","🔍"],["Apps","🧩"],["Live","📡"],["Settings","⚙️"],["Power","⏻"]];
+
+          const apps=document.getElementById('apps');
+          APPS.forEach(a=>{
+            const t=document.createElement('a');
+            t.className='tile glass nav';t.tabIndex=0;t.dataset.row=1;t.dataset.url=a[3];t.dataset.pkg=a[4];
+            t.innerHTML=`<div class="ico" style="background:linear-gradient(145deg,${a[2].split(',')[0]},${a[2].split(',')[1]})">${a[1]}</div><span>${a[0]}</span>`;
+            apps.appendChild(t);
+          });
+          const dock=document.getElementById('dock');
+          DOCK.forEach((d,i)=>{
+            const b=document.createElement('button');
+            b.className='dbtn nav'+(i==0?' active':'');b.dataset.row=2;b.dataset.name=d[0];
+            b.innerHTML=`<span>${d[1]}</span><b>${d[0]}</b>`;
+            dock.appendChild(b);
+          });
+
+          const rows=()=>[0,1,2].map(r=>[...document.querySelectorAll(`.nav[data-row="${r}"]`)]);
+          let r=1,c=0;
+          function setFocus(){
+            const R=rows();document.querySelectorAll('.focus').forEach(e=>e.classList.remove('focus'));
+            c=Math.max(0,Math.min(c,R[r].length-1));
+            const el=R[r][c];el.classList.add('focus');el.focus({preventScroll:true});if(r===1)el.scrollIntoView({inline:'center',block:'nearest'});
+          }
+          function toast(m){const t=document.getElementById('toast');t.textContent=m;t.classList.add('show');clearTimeout(toast.t);toast.t=setTimeout(()=>t.classList.remove('show'),1800)}
+          function activate(el){
+            if(el.dataset.pkg&&window.Android&&Android.launch(el.dataset.pkg))return;
+            if(el.dataset.pkg&&window.Android){toast('App not installed');return}
+            if(el.dataset.url){window.location.href=el.dataset.url;return}
+            const n=el.dataset.name;
+            document.querySelectorAll('.dbtn').forEach(b=>b.classList.remove('active'));el.classList.add('active');
+            if(n==='Home'){r=1;c=0;setFocus();toast('Home')}
+            else if(n==='Search'){if(window.Android){Android.launch('com.amazon.cloud9')}else{location.href='https://www.google.com'}}
+            else if(n==='Apps'){r=1;c=0;setFocus();toast('All apps')}
+            else if(n==='Live'){location.href='https://www.bbc.co.uk/iplayer'}
+            else if(n==='Settings'){window.Android?Android.openSettings():toast('Settings open in the installed app')}
+            else toast('Hold the Home button to sleep');
+          }
+          addEventListener('keydown',e=>{
+            const R=rows();
+            switch(e.key){
+              case 'ArrowRight':c++;break;
+              case 'ArrowLeft':c--;break;
+              case 'ArrowDown':r=Math.min(2,r+1);break;
+              case 'ArrowUp':r=Math.max(0,r-1);break;
+              case 'Enter':case ' ':activate(R[r][c]);e.preventDefault();return;
+              case 'Escape':case 'Backspace':r=1;c=0;break;
+              default:return;
+            }
+            e.preventDefault();setFocus();
+          });
+          document.addEventListener('click',e=>{const n=e.target.closest('.nav');if(n){const R=rows();r=+n.dataset.row;c=R[r].indexOf(n);setFocus();activate(n)}});
+
+          function tick(){
+            const d=new Date(),h=d.getHours();
+            document.getElementById('clock').textContent=d.toLocaleTimeString([],{hour:'2-digit',minute:'2-digit'});
+            document.getElementById('date').textContent=d.toLocaleDateString([],{weekday:'short',day:'numeric',month:'short'});
+            document.getElementById('greet').textContent=h<12?'Good morning':h<18?'Good afternoon':'Good evening';
+          }
+          window.onBack=()=>{r=1;c=0;setFocus()};
+          tick();setInterval(tick,30000);setFocus();
+          </script>
+          </body>
+          </html>
+          GLASS_EOF
+          cat > proj/app/src/main/java/com/glass/launcher/MainActivity.java <<'GLASS_EOF'
+          package com.glass.launcher;
+
+          import android.app.Activity;
+          import android.content.Intent;
+          import android.graphics.Color;
+          import android.os.Bundle;
+          import android.provider.Settings;
+          import android.view.View;
+          import android.view.Window;
+          import android.webkit.JavascriptInterface;
+          import android.webkit.WebSettings;
+          import android.webkit.WebView;
+          import android.webkit.WebViewClient;
+
+          public class MainActivity extends Activity {
+
+              private WebView web;
+
+              @Override
+              protected void onCreate(Bundle savedInstanceState) {
+                  super.onCreate(savedInstanceState);
+                  requestWindowFeature(Window.FEATURE_NO_TITLE);
+
+                  web = new WebView(this);
+                  web.setBackgroundColor(Color.parseColor("#0b0d1a"));
+                  setContentView(web);
+
+                  WebSettings s = web.getSettings();
+                  s.setJavaScriptEnabled(true);
+                  s.setDomStorageEnabled(true);
+                  s.setAllowFileAccess(true);
+                  s.setMediaPlaybackRequiresUserGesture(false);
+
+                  web.setWebViewClient(new WebViewClient());
+                  web.addJavascriptInterface(new Bridge(), "Android");
+                  web.loadUrl("file:///android_asset/index.html");
+                  web.requestFocus();
+                  hideSystemUi();
+              }
+
+              /** Called from the page: window.Android.launch("package.name") */
+              private class Bridge {
+                  @JavascriptInterface
+                  public boolean launch(String pkg) {
+                      try {
+                          Intent i = getPackageManager().getLeanbackLaunchIntentForPackage(pkg);
+                          if (i == null) i = getPackageManager().getLaunchIntentForPackage(pkg);
+                          if (i == null) return false;
+                          i.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK);
+                          startActivity(i);
+                          return true;
+                      } catch (Exception e) {
+                          return false;
+                      }
+                  }
+
+                  @JavascriptInterface
+                  public void openSettings() {
+                      Intent i = new Intent(Settings.ACTION_SETTINGS);
+                      i.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK);
+                      startActivity(i);
+                  }
+              }
+
+              @Override
+              public void onBackPressed() {
+                  // A launcher should never close itself: send Back to the page instead
+                  web.evaluateJavascript("window.onBack && window.onBack()", null);
+              }
+
+              @Override
+              protected void onNewIntent(Intent intent) {
+                  super.onNewIntent(intent);
+                  // Home button pressed while already open: reset focus
+                  web.evaluateJavascript("window.onBack && window.onBack()", null);
+              }
+
+              @Override
+              protected void onResume() {
+                  super.onResume();
+                  hideSystemUi();
+                  web.onResume();
+              }
+
+              @Override
+              protected void onPause() {
+                  web.onPause();
+                  super.onPause();
+              }
+
+              private void hideSystemUi() {
+                  getWindow().getDecorView().setSystemUiVisibility(
+                          View.SYSTEM_UI_FLAG_LAYOUT_STABLE
+                          | View.SYSTEM_UI_FLAG_LAYOUT_HIDE_NAVIGATION
+                          | View.SYSTEM_UI_FLAG_LAYOUT_FULLSCREEN
+                          | View.SYSTEM_UI_FLAG_HIDE_NAVIGATION
+                          | View.SYSTEM_UI_FLAG_FULLSCREEN
+                          | View.SYSTEM_UI_FLAG_IMMERSIVE_STICKY);
+              }
+          }
+          GLASS_EOF
+          cat > proj/app/src/main/res/drawable/banner.xml <<'GLASS_EOF'
+          <?xml version="1.0" encoding="utf-8"?>
+          <layer-list xmlns:android="http://schemas.android.com/apk/res/android">
+              <item>
+                  <shape android:shape="rectangle">
+                      <gradient
+                          android:angle="315"
+                          android:startColor="#7C3AED"
+                          android:centerColor="#1B1448"
+                          android:endColor="#06B6D4" />
+                  </shape>
+              </item>
+              <item android:left="40dp" android:right="40dp" android:top="55dp" android:bottom="55dp">
+                  <shape android:shape="rectangle">
+                      <solid android:color="#40FFFFFF" />
+                      <stroke android:width="2dp" android:color="#99FFFFFF" />
+                      <corners android:radius="40dp" />
+                  </shape>
+              </item>
+          </layer-list>
+          GLASS_EOF
+          cat > proj/app/src/main/res/values/strings.xml <<'GLASS_EOF'
+          <?xml version="1.0" encoding="utf-8"?>
+          <resources>
+              <string name="app_name">Glass Home</string>
+          </resources>
+          GLASS_EOF
+          cat > proj/app/src/main/res/values/styles.xml <<'GLASS_EOF'
+          <?xml version="1.0" encoding="utf-8"?>
+          <resources>
+              <style name="AppTheme" parent="@android:style/Theme.Material.NoActionBar">
+                  <item name="android:windowBackground">@android:color/black</item>
+                  <item name="android:windowFullscreen">true</item>
+              </style>
+          </resources>
+          GLASS_EOF
+          cat > proj/build.gradle <<'GLASS_EOF'
+          plugins {
+              id 'com.android.application' version '8.5.2' apply false
+          }
+          GLASS_EOF
+          cat > proj/gradle.properties <<'GLASS_EOF'
+          org.gradle.jvmargs=-Xmx2g
+          android.useAndroidX=false
+          android.nonTransitiveRClass=true
+          GLASS_EOF
+          cat > proj/settings.gradle <<'GLASS_EOF'
+          pluginManagement {
+              repositories {
+                  google()
+                  mavenCentral()
+                  gradlePluginPortal()
+              }
+          }
+          dependencyResolutionManagement {
+              repositoriesMode.set(RepositoriesMode.FAIL_ON_PROJECT_REPOS)
+              repositories {
+                  google()
+                  mavenCentral()
+              }
+          }
+          rootProject.name = "FireGlassLauncher"
+          include ':app'
+          GLASS_EOF
+
+      - name: Build APK
+        working-directory: proj
+        run: gradle assembleRelease --no-daemon
+
+      - name: Name the APK
+        run: cp proj/app/build/outputs/apk/release/app-release.apk GlassHome.apk
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: GlassHome-apk
+          path: GlassHome.apk
+
+      - name: Publish release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: v${{ github.run_number }}
+          name: Glass Home v${{ github.run_number }}
+          files: GlassHome.apk
